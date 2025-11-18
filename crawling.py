@@ -2,9 +2,7 @@ import time
 import pandas as pd
 import math
 import argparse
-import queue
 import json
-from concurrent.futures import ThreadPoolExecutor, as_completed
 from selenium import webdriver
 from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.common.by import By
@@ -155,7 +153,6 @@ def create_driver(headless=False, worker_id=None, base_profile_dir=TEMP_DATA_PAT
         })
     except Exception:
         pass
-    input()
     return drv
 
 def save_cookies(driver, cookie_file):
@@ -225,61 +222,33 @@ def is_logged_in(driver):
     return False
 
 
-def worker_thread(worker_id, rows, results_q, headless=False, base_profile_dir=TEMP_DATA_PATH, cookies_file=None, reuse_cookies=False, clone_profile=False, cleanup_clone=False, force_new_profile=False):
-    driver = None
+def get_processed_indices(csv_path):
+    """CSV 파일에서 이미 처리된 인덱스 목록을 반환"""
+    if not os.path.exists(csv_path):
+        return set()
     try:
-        driver = create_driver(headless=headless, worker_id=worker_id, base_profile_dir=base_profile_dir, clone_profile=clone_profile, cleanup_clone=cleanup_clone, force_new_profile=force_new_profile)
-        # Stagger start so that all workers don't hit the server at once
-        try:
-            stagger = 0.5 * (worker_id or 0)
-        except Exception:
-            stagger = 0
-        if stagger:
-            time.sleep(stagger)
-        # Load cookies if requested
-        if reuse_cookies and cookies_file and os.path.exists(cookies_file):
-            print(f"Worker {worker_id} - Loading cookies from {cookies_file}")
-            # Ensure we have a base site open so cookies can be added
-            try:
-                load_cookies(driver, cookies_file, url='https://zippoom.com/')
-            except Exception as e:
-                print(f"Worker {worker_id} - load_cookies error: {e}")
-            try:
-                if is_logged_in(driver):
-                    print(f"Worker {worker_id} - login session loaded successfully")
-                else:
-                    print(f"Worker {worker_id} - Not logged in after applying cookies")
-            except Exception:
-                print(f"Worker {worker_id} - Could not confirm login state")
-        for idx, row in rows.iterrows():
-            try:
-                reviews = crawl_zippoom(row['doroJuso'], row['kaptName'], driver)
-                for r in reviews:
-                    results_q.put(r)
-                # polite pause between rows
-                time.sleep(1)
-            except Exception as e:
-                print(f"Worker {worker_id} - Error processing row {idx}: {e}")
-                continue
-    finally:
-        if driver:
-            try:
-                driver.quit()
-            except Exception:
-                pass
-        # optionally cleanup cloned profile after finished
-        if clone_profile and cleanup_clone and worker_id is not None:
-            clone_dir = os.path.join(base_profile_dir, f"worker_{worker_id}")
-            if os.path.exists(clone_dir):
-                try:
-                    shutil.rmtree(clone_dir)
-                    print(f"Cleaned up profile {clone_dir}")
-                except Exception as e:
-                    print(f"Failed to cleanup profile {clone_dir}: {e}")
+        df_existing = pd.read_csv(csv_path)
+        if 'source_index' in df_existing.columns:
+            return set(df_existing['source_index'].unique())
+        return set()
+    except Exception as e:
+        print(f"Warning: CSV 파일 읽기 실패: {e}")
+        return set()
 
-def print_progress(total, q):
-    # no-op helper to format progress if needed
-    print(f"Collected so far: {q.qsize()}/{total}")
+
+def append_to_csv(reviews_data, csv_path):
+    """리뷰 데이터를 CSV에 추가 저장"""
+    if not reviews_data:
+        return
+    
+    df_new = pd.DataFrame(reviews_data)
+    
+    # 파일이 없거나 비어있으면 헤더 포함해서 생성
+    if not os.path.exists(csv_path) or os.path.getsize(csv_path) == 0:
+        df_new.to_csv(csv_path, index=False, encoding='utf-8-sig')
+    else:
+        # 파일이 있으면 헤더 없이 추가
+        df_new.to_csv(csv_path, mode='a', header=False, index=False, encoding='utf-8-sig')
 
 
 def crawl_zippoom(doro_juso, kapt_name, driver):
@@ -308,7 +277,7 @@ def crawl_zippoom(doro_juso, kapt_name, driver):
             # Use the search page directly so we can type into the visible search field
             driver.get("https://zippoom.com/search")
             # 페이지 로딩 후 React가 안정을 찾을 때까지 조금 넉넉히 대기
-            time.sleep(2) 
+            time.sleep(2 + random.uniform(0, 0.3)) 
             
             wait = WebDriverWait(driver, 10)
             
@@ -358,7 +327,7 @@ def crawl_zippoom(doro_juso, kapt_name, driver):
 
                 except (StaleElementReferenceException, ElementClickInterceptedException):
                     print(f"  ⚠️ 요소가 변경됨(Stale). 재시도 중... ({attempts}/3)")
-                    time.sleep(1)
+                    time.sleep(1 + random.uniform(0, 0.3))
                 except Exception as e:
                     print(f"  ⚠️ 입력 중 일반 에러: {e}")
                     break
@@ -370,14 +339,14 @@ def crawl_zippoom(doro_juso, kapt_name, driver):
             # =========================================================
             # [Step 2] 결과 확인 및 클릭
             # =========================================================
-            time.sleep(3)
+            time.sleep(3 + random.uniform(0, 0.3))
             xpath_result = "//button[.//span[contains(text(), '도로명')]]"
             first_result = wait.until(EC.element_to_be_clickable((By.XPATH, xpath_result)))
             
             driver.execute_script("arguments[0].click();", first_result)
             print(f"  ✅ 검색 성공! 상세 페이지로 이동합니다.")
             success_search = True
-            time.sleep(3)
+            time.sleep(3 + random.uniform(0, 0.3))
             break 
             
         except Exception as e:
@@ -397,7 +366,7 @@ def crawl_zippoom(doro_juso, kapt_name, driver):
         review_tab = wait.until(EC.element_to_be_clickable((By.XPATH, xpath_tab)))
         driver.execute_script("arguments[0].click();", review_tab)
         print("  👉 리뷰 탭 클릭 성공")
-        time.sleep(2)
+        time.sleep(2 + random.uniform(0, 0.3))
     except:
         print("  ℹ️ 리뷰 탭 클릭 건너뜀")
 
@@ -411,12 +380,12 @@ def crawl_zippoom(doro_juso, kapt_name, driver):
                 EC.element_to_be_clickable((By.XPATH, "//button[contains(., '거주 후기 더보기')]"))
             )
             driver.execute_script("arguments[0].click();", more_btn)
-            time.sleep(1)
+            time.sleep(1 + random.uniform(0, 0.3))
         except:
             break 
 
     driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
-    time.sleep(1)
+    time.sleep(1 + random.uniform(0, 0.3))
 
     # =========================================================
     # [Step 5] 데이터 추출
@@ -429,7 +398,7 @@ def crawl_zippoom(doro_juso, kapt_name, driver):
         try:
             full_btn = block.find_element(By.XPATH, ".//p[contains(text(), '전체 보기')]/..")
             driver.execute_script("arguments[0].click();", full_btn)
-            time.sleep(0.1)
+            time.sleep(0.1 + random.uniform(0, 0.3))
         except: pass
 
         try: review_item['Score'] = block.find_element(By.XPATH, ".//p[contains(@class, 'font-bold')]").text
@@ -443,95 +412,119 @@ def crawl_zippoom(doro_juso, kapt_name, driver):
 
     print(f"  🎉 수집 완료: {len(collected_reviews)}건")
     return collected_reviews
-    
-# driver 인스턴스와 crawl_zippoom 함수는 정의되어 있다고 가정합니다.
-
-# 결과를 담을 리스트 (defaultdict를 사용하는 것이 효율적이지만, 
-# 기존처럼 list of dicts로 유지하여 Pandas로 변환합니다.)
-def split_dataframe(df, n):
-    """Split a dataframe into n nearly-equal parts."""
-    if n <= 1:
-        return [df]
-    k, m = divmod(len(df), n)
-    parts = []
-    start = 0
-    for i in range(n):
-        end = start + k + (1 if i < m else 0)
-        parts.append(df.iloc[start:end])
-        start = end
-    return parts
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Zippoom review crawler with multi-threading and headless options")
+    parser = argparse.ArgumentParser(description="Zippoom review crawler (sequential mode)")
     parser.add_argument('--headless', action='store_true', help='Run Chrome in headless mode')
-    parser.add_argument('--workers', type=int, default=4, help='Number of worker threads to run')
     parser.add_argument('--save', type=str, default='리뷰_구조화_결과.csv', help='Output CSV file')
     parser.add_argument('--cookies-file', type=str, default='cookies.json', help='Path to cookies file to save/load')
     parser.add_argument('--record-cookies', action='store_true', help='Open browser for manual login and save cookies to --cookies-file')
-    parser.add_argument('--reuse-cookies', action='store_true', help='Load cookies from --cookies-file for each worker')
-    parser.add_argument('--profile-dir', type=str, default=TEMP_DATA_PATH, help='Base profile directory to reuse or clone')
-    parser.add_argument('--force-new-profile', action='store_true', help='Force using fresh profile per worker; skip cloning from base profile')
-    parser.add_argument('--clone-profile', action='store_true', help='Clone the profile-dir per worker to preserve login data without file-lock conflicts')
-    parser.add_argument('--cleanup-cloned-profiles', action='store_true', help='Remove cloned profile directories when worker finishes')
+    parser.add_argument('--reuse-cookies', action='store_true', help='Load cookies from --cookies-file before crawling')
+    parser.add_argument('--profile-dir', type=str, default=TEMP_DATA_PATH, help='Base profile directory to reuse')
     args = parser.parse_args()
 
-    total_rows = len(df)
-    results_q = queue.Queue()
-
-    # split work
-    workers = max(1, args.workers)
-    parts = split_dataframe(df, workers)
-
-    # If asked to record cookies, open a non-headless browser for manual login and save cookies
+    # 쿠키 저장 모드
     if args.record_cookies:
-        print("Please log in on the opened browser window; after login, press Enter in this console to save cookies.")
-        # Use the specified base profile dir (non-worker) so login remains in that profile
+        print("브라우저가 열립니다. 로그인 후 콘솔에서 Enter를 눌러 쿠키를 저장하세요.")
         login_drv = create_driver(headless=False, worker_id=None, base_profile_dir=args.profile_dir)
         try:
             login_drv.get('https://zippoom.com/')
-            input('After logging in, press Enter to save cookies...')
+            input('로그인 완료 후 Enter를 누르세요...')
             save_cookies(login_drv, args.cookies_file)
         finally:
             try:
                 login_drv.quit()
             except Exception:
                 pass
+        return
 
-    # Run workers
-    if workers == 1:
-        print("Running in single-threaded mode")
-        # For single worker, use base profile directly (worker_id=None) so profile-dir maps to the provided profile
-        worker_thread(None, parts[0], results_q, headless=args.headless, base_profile_dir=args.profile_dir, cookies_file=args.cookies_file, reuse_cookies=args.reuse_cookies, clone_profile=args.clone_profile, cleanup_clone=args.cleanup_cloned_profiles, force_new_profile=args.force_new_profile)
+    # 이미 처리된 인덱스 확인
+    processed_indices = get_processed_indices(args.save)
+    total_rows = len(df)
+    
+    if processed_indices:
+        print(f"이미 처리된 항목: {len(processed_indices)}개")
+        print(f"남은 항목: {total_rows - len(processed_indices)}개")
     else:
-        print(f"Running with {workers} workers")
-        with ThreadPoolExecutor(max_workers=workers) as ex:
-            futures = [ex.submit(worker_thread, wid, parts[wid], results_q,
-                                 headless=args.headless,
-                                 base_profile_dir=args.profile_dir,
-                                 cookies_file=args.cookies_file,
-                                 reuse_cookies=args.reuse_cookies,
-                                 clone_profile=args.clone_profile,
-                                 cleanup_clone=args.cleanup_cloned_profiles,
-                                 force_new_profile=args.force_new_profile) for wid in range(workers)]
-            # Wait for all to complete
-            for f in as_completed(futures):
-                try:
-                    f.result()
-                except Exception as e:
-                    print(f"Worker thrown an exception: {e}")
+        print(f"전체 항목: {total_rows}개")
 
-    # Collect results from queue
-    reviews_data = []
-    while not results_q.empty():
-        reviews_data.append(results_q.get())
+    # 드라이버 생성
+    driver = None
+    try:
+        driver = create_driver(headless=args.headless, worker_id=None, base_profile_dir=args.profile_dir)
+        
+        # 쿠키 로드
+        if args.reuse_cookies and os.path.exists(args.cookies_file):
+            print(f"쿠키 로드 중: {args.cookies_file}")
+            load_cookies(driver, args.cookies_file, url='https://zippoom.com/')
+            if is_logged_in(driver):
+                print("✅ 로그인 세션 복원 성공")
+            else:
+                print("⚠️ 로그인 세션 복원 실패")
 
-    print(f"\n총 수집된 리뷰: {len(reviews_data)}건")
+        # 순차 처리
+        for idx in range(total_rows):
+            # 이미 처리된 항목은 건너뛰기
+            if idx in processed_indices:
+                print(f"[{idx+1}/{total_rows}] 건너뜀 (이미 처리됨)")
+                continue
 
-    if reviews_data:
-        df_final_reviews = pd.DataFrame(reviews_data)
-        df_final_reviews.to_csv(args.save, index=False, encoding='utf-8-sig')
-        print(f"✅ 리뷰 데이터가 '{args.save}'로 저장되었습니다.")
+            row = df.iloc[idx]
+            kapt_name = row.get('kaptName', '')
+            doro_juso = row.get('doroJuso', '')
+            
+            print(f"\n[{idx+1}/{total_rows}] 크롤링 시작: {kapt_name}")
+            
+            try:
+                # 리뷰 수집
+                reviews = crawl_zippoom(doro_juso, kapt_name, driver)
+                
+                # 각 리뷰에 source_index 추가
+                for review in reviews:
+                    review['source_index'] = idx
+                
+                # 리뷰가 없어도 처리 완료 기록
+                if not reviews:
+                    reviews = [{
+                        'kaptName': kapt_name,
+                        'doroJuso': doro_juso,
+                        'Score': None,
+                        'Pros': None,
+                        'Cons': None,
+                        'source_index': idx
+                    }]
+                
+                # CSV에 즉시 저장
+                append_to_csv(reviews, args.save)
+                print(f"  ✅ CSV에 저장 완료: {len(reviews)}건")
+                
+            except Exception as e:
+                print(f"  ⚠️ 에러 발생: {e}")
+                # 에러가 발생해도 처리 완료로 기록 (무한 루프 방지)
+                error_record = [{
+                    'kaptName': kapt_name,
+                    'doroJuso': doro_juso,
+                    'Score': None,
+                    'Pros': None,
+                    'Cons': None,
+                    'source_index': idx,
+                    'error': str(e)
+                }]
+                append_to_csv(error_record, args.save)
+            
+            # 다음 항목으로 넘어가기 전 대기
+            time.sleep(1 + random.uniform(0, 0.3))
+
+    finally:
+        if driver:
+            try:
+                driver.quit()
+                print("\n드라이버 종료")
+            except Exception:
+                pass
+
+    print(f"\n✅ 크롤링 완료! 결과는 '{args.save}'에 저장되었습니다.")
 
 
 if __name__ == '__main__':
