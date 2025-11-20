@@ -227,7 +227,7 @@ def get_processed_indices(csv_path):
     if not os.path.exists(csv_path):
         return set()
     try:
-        df_existing = pd.read_csv(csv_path)
+        df_existing = pd.read_csv(csv_path, on_bad_lines='skip')
         if 'source_index' in df_existing.columns:
             return set(df_existing['source_index'].unique())
         return set()
