@@ -1,24 +1,22 @@
 """
 LangChain ReAct Agent 핵심 로직 모듈
 ====================================
-Zero-shot Agent with ReAct 패턴 구현
-ConversationBufferMemory 기반 멀티턴 대화 지원
+LangGraph 기반 ReAct 패턴 구현
+멀티턴 대화 지원
 
 Author: RealHome Agent Team
-Version: 1.0.0
+Version: 2.0.0 (langgraph 호환)
 """
 
 import os
 import logging
-from typing import Optional, List, Dict, Any, Tuple
+from typing import Optional, List, Dict, Any, Sequence
 from datetime import datetime
 
 from langchain_openai import ChatOpenAI
-from langchain.agents import AgentExecutor, create_react_agent
-from langchain.memory import ConversationBufferMemory, ConversationSummaryBufferMemory
-from langchain_core.prompts import PromptTemplate, ChatPromptTemplate, MessagesPlaceholder
-from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
-from langchain.callbacks.base import BaseCallbackHandler
+from langchain_core.messages import HumanMessage, AIMessage, SystemMessage, BaseMessage
+from langgraph.prebuilt import create_react_agent
+from langgraph.checkpoint.memory import MemorySaver
 
 from custom_tools import get_all_tools, search_apartment_tool, policy_search_tool, loan_calculator_tool
 
@@ -34,7 +32,10 @@ logger = logging.getLogger(__name__)
 # 프롬프트 템플릿 정의
 # ============================================================================
 
-SYSTEM_PROMPT = """당신은 서울시 부동산 전문 AI 에이전트 "리얼홈 어시스턴트"입니다.
+def get_system_prompt() -> str:
+    """시스템 프롬프트 생성"""
+    current_date = datetime.now().strftime("%Y년 %m월 %d일")
+    return f"""당신은 서울시 부동산 전문 AI 에이전트 "리얼홈 어시스턴트"입니다.
 
 ## 역할
 - 서울시 송파구, 마포구, 노원구 지역의 아파트 매수 희망자를 돕습니다.
@@ -76,80 +77,6 @@ SYSTEM_PROMPT = """당신은 서울시 부동산 전문 AI 에이전트 "리얼�
 
 현재 날짜: {current_date}
 """
-
-
-REACT_PROMPT_TEMPLATE = """당신은 서울시 부동산 전문 AI 에이전트입니다.
-
-{system_prompt}
-
-## 사용 가능한 도구
-{tools}
-
-## 도구 사용 방법
-다음 형식을 정확히 따르세요:
-
-Question: 답변해야 할 질문
-Thought: 이 질문에 답하기 위해 어떻게 해야 할지 생각합니다
-Action: 사용할 도구 이름 [{tool_names}] 중 하나
-Action Input: 도구에 전달할 입력값 (JSON 형식)
-Observation: 도구 실행 결과
-... (Thought/Action/Action Input/Observation 반복 가능)
-Thought: 최종 답변을 도출했습니다
-Final Answer: 사용자에게 전달할 최종 답변
-
-## 주의사항
-1. 도구 입력은 반드시 유효한 JSON 형식이어야 합니다.
-2. 가격은 만원 단위로 입력합니다 (예: 7억 = 70000)
-3. 사용자의 모호한 표현을 구체적인 조건으로 변환하세요.
-4. 검색 결과가 없으면 조건 완화를 제안하세요.
-
-## 이전 대화 내용
-{chat_history}
-
-## 현재 질문
-Question: {input}
-
-{agent_scratchpad}"""
-
-
-QUERY_UNDERSTANDING_PROMPT = """사용자 질문을 분석하여 검색 조건을 추출하세요.
-
-사용자 질문: {user_query}
-
-다음 항목을 추출하세요:
-1. 지역 (송파구/마포구/노원구 또는 특정 동)
-2. 가격 범위 (최소~최대, 만원 단위)
-3. 면적 범위 (최소~최대, m² 단위)
-4. 라이프스타일 키워드 (육아, 교통, 조용한 등)
-5. 추가 조건 (층수, 준공연도 등)
-
-추출 결과 (JSON 형식):
-"""
-
-
-# ============================================================================
-# 콜백 핸들러 (로깅 및 디버깅)
-# ============================================================================
-
-class AgentLoggingHandler(BaseCallbackHandler):
-    """에이전트 동작 로깅 콜백 핸들러"""
-    
-    def on_agent_action(self, action, **kwargs):
-        logger.info(f"🔧 도구 호출: {action.tool}")
-        logger.debug(f"   입력: {action.tool_input}")
-    
-    def on_agent_finish(self, finish, **kwargs):
-        logger.info("✅ 에이전트 응답 완료")
-    
-    def on_tool_start(self, serialized, input_str, **kwargs):
-        tool_name = serialized.get('name', 'unknown')
-        logger.info(f"🚀 도구 시작: {tool_name}")
-    
-    def on_tool_end(self, output, **kwargs):
-        logger.info(f"📊 도구 결과: {output[:200]}..." if len(output) > 200 else f"📊 도구 결과: {output}")
-    
-    def on_tool_error(self, error, **kwargs):
-        logger.error(f"❌ 도구 오류: {error}")
 
 
 # ============================================================================
@@ -293,7 +220,7 @@ class RealHomeAgent:
     """
     라이프스타일 기반 리얼홈 에이전트
     
-    ReAct 패턴을 적용한 LangChain Agent로,
+    LangGraph ReAct 패턴을 적용한 Agent로,
     멀티턴 대화와 다양한 도구 활용을 지원합니다.
     """
     
@@ -327,15 +254,17 @@ class RealHomeAgent:
         # 도구 초기화
         self.tools = get_all_tools()
         
-        # 메모리 초기화 (ConversationBufferMemory)
-        self.memory = ConversationBufferMemory(
-            memory_key="chat_history",
-            return_messages=True,
-            output_key="output"
-        )
+        # 대화 기록 저장 (langgraph용 MemorySaver)
+        self.memory = MemorySaver()
+        
+        # 대화 기록 (내부 관리용)
+        self._chat_history: List[BaseMessage] = []
         
         # 쿼리 파서
         self.query_parser = QueryParser()
+        
+        # 시스템 프롬프트
+        self.system_prompt = get_system_prompt()
         
         # 에이전트 초기화
         self._init_agent()
@@ -343,48 +272,25 @@ class RealHomeAgent:
         logger.info(f"RealHomeAgent 초기화 완료 (model: {model_name})")
     
     def _init_agent(self) -> None:
-        """ReAct 에이전트 초기화"""
+        """LangGraph ReAct 에이전트 초기화"""
         
-        # 프롬프트 템플릿 생성
-        current_date = datetime.now().strftime("%Y년 %m월 %d일")
-        system_prompt = SYSTEM_PROMPT.format(current_date=current_date)
-        
-        prompt = PromptTemplate.from_template(
-            REACT_PROMPT_TEMPLATE.format(
-                system_prompt=system_prompt,
-                tools="{tools}",
-                tool_names="{tool_names}",
-                chat_history="{chat_history}",
-                input="{input}",
-                agent_scratchpad="{agent_scratchpad}"
-            )
-        )
-        
-        # ReAct 에이전트 생성
-        agent = create_react_agent(
-            llm=self.llm,
+        # LangGraph 기반 ReAct 에이전트 생성
+        self.agent = create_react_agent(
+            model=self.llm,
             tools=self.tools,
-            prompt=prompt
+            prompt=SystemMessage(content=self.system_prompt),
+            checkpointer=self.memory
         )
         
-        # 에이전트 실행기 생성
-        self.agent_executor = AgentExecutor(
-            agent=agent,
-            tools=self.tools,
-            memory=self.memory,
-            verbose=self.verbose,
-            handle_parsing_errors=True,
-            max_iterations=10,
-            early_stopping_method="generate",
-            callbacks=[AgentLoggingHandler()] if self.verbose else None
-        )
+        logger.info("LangGraph ReAct 에이전트 초기화 완료")
     
-    def chat(self, user_message: str) -> str:
+    def chat(self, user_message: str, thread_id: str = "default") -> str:
         """
         사용자 메시지 처리 및 응답 생성
         
         Args:
             user_message: 사용자 입력
+            thread_id: 대화 스레드 ID
             
         Returns:
             에이전트 응답
@@ -395,15 +301,36 @@ class RealHomeAgent:
             # 쿼리 파싱 (모호한 질문 구체화)
             parsed_query = self.query_parser.parse(user_message)
             
-            # 에이전트 실행
-            response = self.agent_executor.invoke({
-                "input": user_message,
-                "parsed_query": parsed_query
-            })
+            # 대화 기록에 사용자 메시지 추가
+            self._chat_history.append(HumanMessage(content=user_message))
             
-            output = response.get("output", "죄송합니다. 응답을 생성하지 못했습니다.")
+            # 에이전트 실행 (langgraph는 invoke 사용)
+            config = {"configurable": {"thread_id": thread_id}}
             
-            logger.info(f"에이전트 응답: {output[:200]}...")
+            response = self.agent.invoke(
+                {"messages": [HumanMessage(content=user_message)]},
+                config=config
+            )
+            
+            # 응답 추출
+            messages = response.get("messages", [])
+            if messages:
+                # 마지막 AI 메시지 추출
+                output = ""
+                for msg in reversed(messages):
+                    if isinstance(msg, AIMessage) and msg.content:
+                        output = msg.content
+                        break
+                
+                if not output:
+                    output = str(messages[-1].content) if messages else "죄송합니다. 응답을 생성하지 못했습니다."
+            else:
+                output = "죄송합니다. 응답을 생성하지 못했습니다."
+            
+            # 대화 기록에 AI 응답 추가
+            self._chat_history.append(AIMessage(content=output))
+            
+            logger.info(f"에이전트 응답: {output[:200]}..." if len(output) > 200 else f"에이전트 응답: {output}")
             return output
             
         except Exception as e:
@@ -417,10 +344,9 @@ class RealHomeAgent:
         Returns:
             대화 기록 리스트
         """
-        messages = self.memory.chat_memory.messages
         history = []
         
-        for msg in messages:
+        for msg in self._chat_history:
             if isinstance(msg, HumanMessage):
                 history.append({"role": "user", "content": msg.content})
             elif isinstance(msg, AIMessage):
@@ -430,7 +356,10 @@ class RealHomeAgent:
     
     def clear_memory(self) -> None:
         """대화 기록 초기화"""
-        self.memory.clear()
+        self._chat_history.clear()
+        # langgraph memory도 초기화
+        self.memory = MemorySaver()
+        self._init_agent()
         logger.info("대화 기록 초기화 완료")
     
     def get_suggested_questions(self, context: str = "") -> List[str]:
@@ -453,7 +382,7 @@ class RealHomeAgent:
         ]
         
         # 대화 기록이 있으면 후속 질문 추천
-        if self.memory.chat_memory.messages:
+        if self._chat_history:
             follow_up_questions = [
                 "다른 지역도 검색해줘",
                 "더 저렴한 매물은 없어?",

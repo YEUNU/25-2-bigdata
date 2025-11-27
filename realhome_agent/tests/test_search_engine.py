@@ -31,7 +31,7 @@ class TestESConfig:
         assert config.port == 9200
         assert config.scheme == "http"
         assert config.index_name == "realhome_apartments"
-        assert config.embedding_dim == 768
+        assert config.embedding_dim == 1024  # BAAI/bge-m3 모델 사용
     
     def test_custom_config(self):
         """커스텀 설정 테스트"""
@@ -87,7 +87,7 @@ class TestEmbeddingModel:
         
         # 임베딩 모델 테스트 (실제 모델 없이 기본 동작 확인)
         model = EmbeddingModel()
-        assert model.model_name == "google/embeddinggemma-300m"
+        assert model.model_name == "BAAI/bge-m3"  # 다국어 임베딩 모델
 
 
 class TestSearchEngine:
@@ -124,7 +124,7 @@ class TestSearchEngine:
         assert props["kapt_code"]["type"] == "keyword"
         assert props["price_manwon"]["type"] == "float"
         assert props["embedding"]["type"] == "dense_vector"
-        assert props["embedding"]["dims"] == 768
+        assert props["embedding"]["dims"] == 1024  # BAAI/bge-m3 모델
     
     @patch('search_engine.Elasticsearch')
     def test_connect_success(self, mock_es):
@@ -143,11 +143,12 @@ class TestSearchEngine:
     def test_connect_failure(self, mock_es):
         """연결 실패 테스트"""
         mock_client = MagicMock()
-        mock_client.ping.return_value = False
+        mock_client.info.side_effect = Exception("Connection refused")
         mock_es.return_value = mock_client
         
         engine = SearchEngine(ESConfig())
-        result = engine.connect()
+        # 재시도 횟수를 1로 설정하여 빠르게 실패하도록
+        result = engine.connect(max_retries=1, retry_delay=0)
         
         assert result is False
     

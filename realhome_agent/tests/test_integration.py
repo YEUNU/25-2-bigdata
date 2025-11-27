@@ -23,11 +23,13 @@ class TestEndToEndFlow:
     @patch('custom_tools.get_search_engine')
     @patch('agent_core.ChatOpenAI')
     @patch('agent_core.create_react_agent')
-    @patch('agent_core.AgentExecutor')
+    @patch('agent_core.MemorySaver')
     @patch.dict(os.environ, {'OPENAI_API_KEY': 'test-key'})
-    def test_apartment_search_flow(self, mock_executor, mock_create_agent, 
+    def test_apartment_search_flow(self, mock_memory, mock_create_agent, 
                                     mock_llm, mock_get_engine):
         """아파트 검색 전체 흐름"""
+        from langchain_core.messages import AIMessage
+        
         # 1. 검색 엔진 모킹
         mock_engine = MagicMock()
         mock_engine.hybrid_search.return_value = [
@@ -47,15 +49,15 @@ class TestEndToEndFlow:
         ]
         mock_get_engine.return_value = mock_engine
         
-        # 2. 에이전트 모킹
+        # 2. 에이전트 모킹 (langgraph 방식)
         mock_llm.return_value = MagicMock()
-        mock_create_agent.return_value = MagicMock()
+        mock_memory.return_value = MagicMock()
         
-        mock_executor_instance = MagicMock()
-        mock_executor_instance.invoke.return_value = {
-            "output": "송파구 7억대 아파트를 검색했습니다. 잠실엘스를 추천드립니다."
+        mock_agent = MagicMock()
+        mock_agent.invoke.return_value = {
+            "messages": [AIMessage(content="송파구 7억대 아파트를 검색했습니다. 잠실엘스를 추천드립니다.")]
         }
-        mock_executor.return_value = mock_executor_instance
+        mock_create_agent.return_value = mock_agent
         
         # 3. 에이전트 생성 및 채팅
         from agent_core import RealHomeAgent
@@ -141,20 +143,22 @@ class TestMultiTurnConversation:
     
     @patch('agent_core.ChatOpenAI')
     @patch('agent_core.create_react_agent')
-    @patch('agent_core.AgentExecutor')
+    @patch('agent_core.MemorySaver')
     @patch.dict(os.environ, {'OPENAI_API_KEY': 'test-key'})
-    def test_conversation_memory(self, mock_executor, mock_create_agent, mock_llm):
+    def test_conversation_memory(self, mock_memory, mock_create_agent, mock_llm):
         """대화 메모리 유지 테스트"""
+        from langchain_core.messages import AIMessage
+        
         mock_llm.return_value = MagicMock()
-        mock_create_agent.return_value = MagicMock()
+        mock_memory.return_value = MagicMock()
         
         responses = [
-            {"output": "송파구 아파트를 추천해드립니다."},
-            {"output": "네, 더 저렴한 매물을 찾아봤습니다."},
+            {"messages": [AIMessage(content="송파구 아파트를 추천해드립니다.")]},
+            {"messages": [AIMessage(content="네, 더 저렴한 매물을 찾아봤습니다.")]},
         ]
-        mock_executor_instance = MagicMock()
-        mock_executor_instance.invoke.side_effect = responses
-        mock_executor.return_value = mock_executor_instance
+        mock_agent = MagicMock()
+        mock_agent.invoke.side_effect = responses
+        mock_create_agent.return_value = mock_agent
         
         from agent_core import RealHomeAgent
         agent = RealHomeAgent(verbose=False)
@@ -269,16 +273,16 @@ class TestErrorHandling:
     
     @patch('agent_core.ChatOpenAI')
     @patch('agent_core.create_react_agent')
-    @patch('agent_core.AgentExecutor')
+    @patch('agent_core.MemorySaver')
     @patch.dict(os.environ, {'OPENAI_API_KEY': 'test-key'})
-    def test_agent_error_recovery(self, mock_executor, mock_create_agent, mock_llm):
+    def test_agent_error_recovery(self, mock_memory, mock_create_agent, mock_llm):
         """에이전트 오류 복구"""
         mock_llm.return_value = MagicMock()
-        mock_create_agent.return_value = MagicMock()
+        mock_memory.return_value = MagicMock()
         
-        mock_executor_instance = MagicMock()
-        mock_executor_instance.invoke.side_effect = Exception("OpenAI API Error")
-        mock_executor.return_value = mock_executor_instance
+        mock_agent = MagicMock()
+        mock_agent.invoke.side_effect = Exception("OpenAI API Error")
+        mock_create_agent.return_value = mock_agent
         
         from agent_core import RealHomeAgent
         agent = RealHomeAgent(verbose=False)

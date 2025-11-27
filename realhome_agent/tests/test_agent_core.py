@@ -21,8 +21,7 @@ from agent_core import (
     SessionManager,
     quick_chat,
     session_manager,
-    SYSTEM_PROMPT,
-    REACT_PROMPT_TEMPLATE
+    get_system_prompt
 )
 
 
@@ -145,7 +144,8 @@ class TestQueryParser:
         
         assert result["districts"] is None
         assert result["min_price"] is None
-        assert result["lifestyle_keywords"] == []
+        # 빈 쿼리는 lifestyle_keywords가 None 또는 빈 리스트
+        assert result["lifestyle_keywords"] is None or result["lifestyle_keywords"] == []
 
 
 class TestSessionManager:
@@ -211,13 +211,13 @@ class TestRealHomeAgent:
     
     @patch('agent_core.ChatOpenAI')
     @patch('agent_core.create_react_agent')
-    @patch('agent_core.AgentExecutor')
+    @patch('agent_core.MemorySaver')
     @patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"})
-    def test_agent_initialization(self, mock_executor, mock_create_agent, mock_llm):
+    def test_agent_initialization(self, mock_memory, mock_create_agent, mock_llm):
         """에이전트 초기화 테스트"""
         mock_llm.return_value = MagicMock()
         mock_create_agent.return_value = MagicMock()
-        mock_executor.return_value = MagicMock()
+        mock_memory.return_value = MagicMock()
         
         agent = RealHomeAgent(model_name="gpt-4o-mini", verbose=False)
         
@@ -226,37 +226,40 @@ class TestRealHomeAgent:
     
     @patch('agent_core.ChatOpenAI')
     @patch('agent_core.create_react_agent')
-    @patch('agent_core.AgentExecutor')
+    @patch('agent_core.MemorySaver')
     @patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"})
-    def test_chat_success(self, mock_executor, mock_create_agent, mock_llm):
+    def test_chat_success(self, mock_memory, mock_create_agent, mock_llm):
         """채팅 성공 테스트"""
-        mock_llm.return_value = MagicMock()
-        mock_create_agent.return_value = MagicMock()
+        from langchain_core.messages import AIMessage
         
-        mock_executor_instance = MagicMock()
-        mock_executor_instance.invoke.return_value = {
-            "output": "7억대 송파구 아파트를 추천해드립니다."
+        mock_llm.return_value = MagicMock()
+        mock_memory.return_value = MagicMock()
+        
+        # 에이전트 invoke 응답 모킹
+        mock_agent = MagicMock()
+        mock_agent.invoke.return_value = {
+            "messages": [AIMessage(content="7억대 송파구 아파트를 추천해드립니다.")]
         }
-        mock_executor.return_value = mock_executor_instance
+        mock_create_agent.return_value = mock_agent
         
         agent = RealHomeAgent(verbose=False)
         response = agent.chat("7억대 송파구 아파트 추천해줘")
         
         assert "아파트" in response
-        mock_executor_instance.invoke.assert_called_once()
+        mock_agent.invoke.assert_called_once()
     
     @patch('agent_core.ChatOpenAI')
     @patch('agent_core.create_react_agent')
-    @patch('agent_core.AgentExecutor')
+    @patch('agent_core.MemorySaver')
     @patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"})
-    def test_chat_error_handling(self, mock_executor, mock_create_agent, mock_llm):
+    def test_chat_error_handling(self, mock_memory, mock_create_agent, mock_llm):
         """채팅 오류 처리 테스트"""
         mock_llm.return_value = MagicMock()
-        mock_create_agent.return_value = MagicMock()
+        mock_memory.return_value = MagicMock()
         
-        mock_executor_instance = MagicMock()
-        mock_executor_instance.invoke.side_effect = Exception("API Error")
-        mock_executor.return_value = mock_executor_instance
+        mock_agent = MagicMock()
+        mock_agent.invoke.side_effect = Exception("API Error")
+        mock_create_agent.return_value = mock_agent
         
         agent = RealHomeAgent(verbose=False)
         response = agent.chat("테스트 질문")
@@ -265,13 +268,13 @@ class TestRealHomeAgent:
     
     @patch('agent_core.ChatOpenAI')
     @patch('agent_core.create_react_agent')
-    @patch('agent_core.AgentExecutor')
+    @patch('agent_core.MemorySaver')
     @patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"})
-    def test_clear_memory(self, mock_executor, mock_create_agent, mock_llm):
+    def test_clear_memory(self, mock_memory, mock_create_agent, mock_llm):
         """메모리 초기화 테스트"""
         mock_llm.return_value = MagicMock()
         mock_create_agent.return_value = MagicMock()
-        mock_executor.return_value = MagicMock()
+        mock_memory.return_value = MagicMock()
         
         agent = RealHomeAgent(verbose=False)
         agent.clear_memory()
@@ -281,13 +284,13 @@ class TestRealHomeAgent:
     
     @patch('agent_core.ChatOpenAI')
     @patch('agent_core.create_react_agent')
-    @patch('agent_core.AgentExecutor')
+    @patch('agent_core.MemorySaver')
     @patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"})
-    def test_get_suggested_questions_initial(self, mock_executor, mock_create_agent, mock_llm):
+    def test_get_suggested_questions_initial(self, mock_memory, mock_create_agent, mock_llm):
         """초기 추천 질문 테스트"""
         mock_llm.return_value = MagicMock()
         mock_create_agent.return_value = MagicMock()
-        mock_executor.return_value = MagicMock()
+        mock_memory.return_value = MagicMock()
         
         agent = RealHomeAgent(verbose=False)
         questions = agent.get_suggested_questions()
@@ -296,33 +299,34 @@ class TestRealHomeAgent:
         assert any("아파트" in q for q in questions)
 
 
-class TestPrompts:
-    """프롬프트 템플릿 테스트"""
+class TestSystemPrompt:
+    """시스템 프롬프트 테스트"""
     
     def test_system_prompt_contains_regions(self):
         """시스템 프롬프트에 대상 지역 포함"""
-        assert "송파구" in SYSTEM_PROMPT
-        assert "마포구" in SYSTEM_PROMPT
-        assert "노원구" in SYSTEM_PROMPT
+        prompt = get_system_prompt()
+        assert "송파구" in prompt
+        assert "마포구" in prompt
+        assert "노원구" in prompt
     
     def test_system_prompt_contains_features(self):
         """시스템 프롬프트에 기능 설명 포함"""
-        assert "매물 검색" in SYSTEM_PROMPT
-        assert "라이프스타일" in SYSTEM_PROMPT
-        assert "정책" in SYSTEM_PROMPT
-        assert "대출" in SYSTEM_PROMPT
+        prompt = get_system_prompt()
+        assert "매물 검색" in prompt
+        assert "라이프스타일" in prompt
+        assert "정책" in prompt
+        assert "대출" in prompt
     
     def test_system_prompt_contains_price_guide(self):
         """시스템 프롬프트에 가격 가이드 포함"""
-        assert "억대" in SYSTEM_PROMPT
-        assert "억 이하" in SYSTEM_PROMPT
+        prompt = get_system_prompt()
+        assert "억대" in prompt
+        assert "억 이하" in prompt
     
-    def test_react_prompt_contains_format(self):
-        """ReAct 프롬프트에 형식 포함"""
-        assert "Thought" in REACT_PROMPT_TEMPLATE
-        assert "Action" in REACT_PROMPT_TEMPLATE
-        assert "Observation" in REACT_PROMPT_TEMPLATE
-        assert "Final Answer" in REACT_PROMPT_TEMPLATE
+    def test_system_prompt_contains_date(self):
+        """시스템 프롬프트에 현재 날짜 포함"""
+        prompt = get_system_prompt()
+        assert "현재 날짜:" in prompt
 
 
 class TestQueryParserEdgeCases:

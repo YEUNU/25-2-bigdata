@@ -140,28 +140,28 @@ class TestFilterValidation:
 class TestElasticSearchCheck:
     """ElasticSearch 연결 확인 테스트"""
     
-    @patch('app.SearchEngine')
-    @patch('app.ESConfig')
-    def test_check_elasticsearch_connected(self, mock_config, mock_engine_class):
+    @patch('search_engine.SearchEngine')
+    def test_check_elasticsearch_connected(self, mock_engine_class):
         """ES 연결 성공 테스트"""
         mock_engine = MagicMock()
         mock_engine.connect.return_value = True
         mock_engine_class.return_value = mock_engine
         
         # check_elasticsearch 함수 시뮬레이션
-        result = mock_engine.connect()
+        engine = mock_engine_class()
+        result = engine.connect()
         
         assert result is True
     
-    @patch('app.SearchEngine')
-    @patch('app.ESConfig')
-    def test_check_elasticsearch_disconnected(self, mock_config, mock_engine_class):
+    @patch('search_engine.SearchEngine')
+    def test_check_elasticsearch_disconnected(self, mock_engine_class):
         """ES 연결 실패 테스트"""
         mock_engine = MagicMock()
         mock_engine.connect.return_value = False
         mock_engine_class.return_value = mock_engine
         
-        result = mock_engine.connect()
+        engine = mock_engine_class()
+        result = engine.connect()
         
         assert result is False
 

@@ -115,11 +115,27 @@ def merge_data(
         merged['gu'] = merged['gu'].fillna(merged['gu_deal'])
         merged = merged.drop(columns=['gu_deal'])
     
-    # NaN 처리
+    # NaN 처리 - JSON 직렬화를 위해 None으로 변환
     merged = merged.where(pd.notnull(merged), None)
     
-    logger.info(f"데이터 병합 완료: {len(merged)} 건")
-    return merged.to_dict('records')
+    # dict로 변환 후 NaN 값 추가 정리
+    records = merged.to_dict('records')
+    
+    # float('nan') 값도 None으로 변환
+    import math
+    def clean_nan(obj):
+        if isinstance(obj, dict):
+            return {k: clean_nan(v) for k, v in obj.items()}
+        elif isinstance(obj, list):
+            return [clean_nan(item) for item in obj]
+        elif isinstance(obj, float) and math.isnan(obj):
+            return None
+        return obj
+    
+    records = [clean_nan(record) for record in records]
+    
+    logger.info(f"데이터 병합 완료: {len(records)} 건")
+    return records
 
 
 def index_data(documents: List[Dict[str, Any]], config: ESConfig) -> None:
