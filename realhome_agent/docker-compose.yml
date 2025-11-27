@@ -1,0 +1,146 @@
+# =============================================================================
+# 리얼홈 에이전트 Docker Compose 설정
+# =============================================================================
+# 사용법:
+#   개발 환경: docker-compose up -d
+#   프로덕션: docker-compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+
+version: '3.8'
+
+services:
+  # ===========================================================================
+  # 리얼홈 에이전트 애플리케이션
+  # ===========================================================================
+  realhome-agent:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: realhome-agent
+    restart: unless-stopped
+    ports:
+      - "8501:8501"
+    environment:
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - OPENAI_MODEL=${OPENAI_MODEL:-gpt-4o-mini}
+      - OPENAI_TEMPERATURE=${OPENAI_TEMPERATURE:-0.3}
+      - ES_HOST=elasticsearch
+      - ES_PORT=9200
+      - ES_INDEX=${ES_INDEX:-realhome_apartments}
+      - GOOGLE_API_KEY=${GOOGLE_API_KEY:-}
+      - GOOGLE_SEARCH_ENGINE_ID=${GOOGLE_SEARCH_ENGINE_ID:-}
+      - EMBEDDING_MODEL=${EMBEDDING_MODEL:-google/embeddinggemma-300m}
+      - EMBEDDING_DEVICE=${EMBEDDING_DEVICE:-cpu}
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+    volumes:
+      - ./data:/app/data
+      - ./logs:/app/logs
+      # 개발 시 코드 마운트 (주석 해제)
+      # - .:/app
+    depends_on:
+      elasticsearch:
+        condition: service_healthy
+    networks:
+      - realhome-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8501/_stcore/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  # ===========================================================================
+  # ElasticSearch (검색 엔진) - Nori 플러그인 포함
+  # ===========================================================================
+  elasticsearch:
+    build:
+      context: ./elasticsearch
+      dockerfile: Dockerfile
+    container_name: realhome-elasticsearch
+    restart: unless-stopped
+    environment:
+      - discovery.type=single-node
+      - xpack.security.enabled=false
+      - "ES_JAVA_OPTS=-Xms1g -Xmx1g"
+      - cluster.name=realhome-cluster
+      - bootstrap.memory_lock=true
+    ulimits:
+      memlock:
+        soft: -1
+        hard: -1
+      nofile:
+        soft: 65536
+        hard: 65536
+    volumes:
+      - elasticsearch-data:/usr/share/elasticsearch/data
+    ports:
+      - "9200:9200"
+      - "9300:9300"
+    networks:
+      - realhome-network
+    healthcheck:
+      test: ["CMD-SHELL", "curl -s http://localhost:9200/_cluster/health | grep -q 'green\\|yellow'"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+
+  # ===========================================================================
+  # Kibana (ElasticSearch 시각화 - 선택사항)
+  # ===========================================================================
+  kibana:
+    image: docker.elastic.co/kibana/kibana:8.11.0
+    container_name: realhome-kibana
+    restart: unless-stopped
+    environment:
+      - ELASTICSEARCH_HOSTS=http://elasticsearch:9200
+    ports:
+      - "5601:5601"
+    depends_on:
+      elasticsearch:
+        condition: service_healthy
+    networks:
+      - realhome-network
+    profiles:
+      - monitoring
+
+  # ===========================================================================
+  # 데이터 인덱싱 서비스 (초기화용)
+  # ===========================================================================
+  indexer:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: realhome-indexer
+    environment:
+      - ES_HOST=elasticsearch
+      - ES_PORT=9200
+      - ES_INDEX=${ES_INDEX:-realhome_apartments}
+      - EMBEDDING_MODEL=${EMBEDDING_MODEL:-google/embeddinggemma-300m}
+      - EMBEDDING_DEVICE=${EMBEDDING_DEVICE:-cpu}
+    volumes:
+      - ../:/data  # 상위 디렉토리의 CSV 파일 마운트
+      - ./data:/app/data
+    depends_on:
+      elasticsearch:
+        condition: service_healthy
+    networks:
+      - realhome-network
+    command: ["python", "indexer.py"]
+    profiles:
+      - indexing
+
+# =============================================================================
+# 네트워크 설정
+# =============================================================================
+networks:
+  realhome-network:
+    driver: bridge
+    name: realhome-network
+
+# =============================================================================
+# 볼륨 설정
+# =============================================================================
+volumes:
+  elasticsearch-data:
+    driver: local
+    name: realhome-elasticsearch-data
