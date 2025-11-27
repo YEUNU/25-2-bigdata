@@ -2,7 +2,6 @@
 __pycache__/
 *.py[codz]
 *$py.class
-*.txt
 # C extensions
 *.so
 temp_profile
