@@ -1,19 +1,19 @@
 # =============================================================================
-# 리얼홈 에이전트 Docker Compose 설정
+# 리얼홈 에이전트 Docker Compose 설정 (CPU 전용)
 # =============================================================================
-# 사용법:
-#   개발 환경: docker-compose up -d
-#   프로덕션: docker-compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+# GPU가 없는 환경에서 사용
+# 사용법: docker-compose -f docker-compose.cpu.yml up -d
 
 version: '3.8'
 
-services:  # ===========================================================================
-  # 리얼홈 에이전트 애플리케이션 (CUDA 가속 지원)
+services:
+  # ===========================================================================
+  # 리얼홈 에이전트 애플리케이션 (CPU 전용)
   # ===========================================================================
   realhome-agent:
     build:
       context: .
-      dockerfile: Dockerfile
+      dockerfile: Dockerfile.cpu
     container_name: realhome-agent
     restart: unless-stopped
     ports:
@@ -28,28 +28,16 @@ services:  # ===================================================================
       - GOOGLE_API_KEY=${GOOGLE_API_KEY:-}
       - GOOGLE_SEARCH_ENGINE_ID=${GOOGLE_SEARCH_ENGINE_ID:-}
       - EMBEDDING_MODEL=${EMBEDDING_MODEL:-BAAI/bge-m3}
-      - EMBEDDING_DEVICE=${EMBEDDING_DEVICE:-cuda}
+      - EMBEDDING_DEVICE=cpu
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
-      - NVIDIA_VISIBLE_DEVICES=all
-      - NVIDIA_DRIVER_CAPABILITIES=compute,utility
     volumes:
       - ./data:/app/data
       - ./logs:/app/logs
-      # 개발 시 코드 마운트 (주석 해제)
-      # - .:/app
     depends_on:
       elasticsearch:
         condition: service_healthy
     networks:
       - realhome-network
-    # NVIDIA GPU 지원
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              count: all
-              capabilities: [gpu]
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8501/_stcore/health"]
       interval: 30s
@@ -94,55 +82,27 @@ services:  # ===================================================================
       start_period: 60s
 
   # ===========================================================================
-  # Kibana (ElasticSearch 시각화 - 선택사항)
-  # ===========================================================================
-  kibana:
-    image: docker.elastic.co/kibana/kibana:8.11.0
-    container_name: realhome-kibana
-    restart: unless-stopped
-    environment:
-      - ELASTICSEARCH_HOSTS=http://elasticsearch:9200
-    ports:
-      - "5601:5601"
-    depends_on:
-      elasticsearch:
-        condition: service_healthy
-    networks:
-      - realhome-network
-    profiles:
-      - monitoring
-  # ===========================================================================
-  # 데이터 인덱싱 서비스 (초기화용, CUDA 가속 지원)
+  # 데이터 인덱싱 서비스 (초기화용, CPU 전용)
   # ===========================================================================
   indexer:
     build:
       context: .
-      dockerfile: Dockerfile
+      dockerfile: Dockerfile.cpu
     container_name: realhome-indexer
     environment:
       - ES_HOST=elasticsearch
       - ES_PORT=9200
       - ES_INDEX=${ES_INDEX:-realhome_apartments}
       - EMBEDDING_MODEL=${EMBEDDING_MODEL:-BAAI/bge-m3}
-      - EMBEDDING_DEVICE=${EMBEDDING_DEVICE:-cuda}
-      - NVIDIA_VISIBLE_DEVICES=all
-      - NVIDIA_DRIVER_CAPABILITIES=compute,utility
+      - EMBEDDING_DEVICE=cpu
     volumes:
-      - ../:/data  # 상위 디렉토리의 CSV 파일 마운트
+      - ../:/data
       - ./data:/app/data
     depends_on:
       elasticsearch:
         condition: service_healthy
     networks:
       - realhome-network
-    # NVIDIA GPU 지원
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              count: all
-              capabilities: [gpu]
     command: ["python", "indexer.py"]
     profiles:
       - indexing
