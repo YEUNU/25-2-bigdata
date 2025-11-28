@@ -44,7 +44,7 @@ realhome_agent/
 | `ES_PORT` | ElasticSearch 포트 | `9200` |
 | `ES_INDEX` | 인덱스 이름 | `realhome_apartments` |
 | `EMBEDDING_MODEL` | 임베딩 모델 | `BAAI/bge-m3` |
-| `EMBEDDING_DEVICE` | 임베딩 디바이스 | `cpu` |
+| `EMBEDDING_DEVICE` | 임베딩 디바이스 | `cuda` (GPU) / `cpu` |
 | `GOOGLE_API_KEY` | Google Search API 키 | (선택) |
 | `GOOGLE_SEARCH_ENGINE_ID` | Search Engine ID | (선택) |
 
@@ -57,20 +57,52 @@ cp .env.example .env
 ```
 
 ### 2. Docker 실행
+
+#### GPU 환경 (NVIDIA CUDA 가속)
 ```bash
-# 전체 시스템 시작
+# 사전 요구사항: NVIDIA Driver, NVIDIA Container Toolkit 설치 필요
+# 설치 확인: nvidia-smi
+
+# 전체 시스템 시작 (GPU 가속)
 docker-compose up -d
 
-# 데이터 인덱싱 (최초 1회)
+# 데이터 인덱싱 (최초 1회, GPU 가속)
 docker-compose --profile indexing up indexer
 
 # 로그 확인
 docker-compose logs -f realhome-agent
 ```
 
+#### CPU 전용 환경 (GPU 없음)
+```bash
+# CPU 전용 docker-compose 사용
+docker-compose -f docker-compose.cpu.yml up -d
+
+# 데이터 인덱싱 (CPU 전용)
+docker-compose -f docker-compose.cpu.yml --profile indexing up indexer
+```
+
 ### 3. 접속
 - Streamlit UI: http://localhost:8501
 - ElasticSearch: http://localhost:9200
+
+### NVIDIA Container Toolkit 설치 (Ubuntu/WSL2)
+```bash
+# 저장소 설정
+distribution=$(. /etc/os-release;echo $ID$VERSION_ID)
+curl -s -L https://nvidia.github.io/nvidia-docker/gpgkey | sudo apt-key add -
+curl -s -L https://nvidia.github.io/nvidia-docker/$distribution/nvidia-docker.list | sudo tee /etc/apt/sources.list.d/nvidia-docker.list
+
+# 설치
+sudo apt-get update
+sudo apt-get install -y nvidia-container-toolkit
+
+# Docker 재시작
+sudo systemctl restart docker
+
+# 테스트
+docker run --rm --gpus all nvidia/cuda:12.1.1-base-ubuntu22.04 nvidia-smi
+```
 
 ## 테스트
 
