@@ -226,8 +226,8 @@ class RealHomeAgent:
     
     def __init__(
         self,
-        model_name: str = "gpt-4o-mini",
-        temperature: float = 0.3,
+        model_name: str = None,
+        temperature: float = None,
         max_memory_tokens: int = 2000,
         verbose: bool = True
     ):
@@ -235,19 +235,20 @@ class RealHomeAgent:
         에이전트 초기화
         
         Args:
-            model_name: OpenAI 모델명
-            temperature: 응답 창의성 (0~1)
+            model_name: OpenAI 모델명 (기본값: 환경변수 OPENAI_MODEL 또는 gpt-4o-mini)
+            temperature: 응답 창의성 (0~1, 기본값: 환경변수 OPENAI_TEMPERATURE 또는 0.3)
             max_memory_tokens: 메모리 최대 토큰 수
             verbose: 상세 로깅 여부
         """
-        self.model_name = model_name
-        self.temperature = temperature
+        # 환경변수에서 설정 읽기
+        self.model_name = model_name or os.getenv("OPENAI_MODEL", "gpt-4o-mini")
+        self.temperature = temperature if temperature is not None else float(os.getenv("OPENAI_TEMPERATURE", "0.3"))
         self.verbose = verbose
         
         # LLM 초기화
         self.llm = ChatOpenAI(
-            model=model_name,
-            temperature=temperature,
+            model=self.model_name,
+            temperature=self.temperature,
             api_key=os.getenv("OPENAI_API_KEY")
         )
         
@@ -269,7 +270,7 @@ class RealHomeAgent:
         # 에이전트 초기화
         self._init_agent()
         
-        logger.info(f"RealHomeAgent 초기화 완료 (model: {model_name})")
+        logger.info(f"RealHomeAgent 초기화 완료 (model: {self.model_name})")
     
     def _init_agent(self) -> None:
         """LangGraph ReAct 에이전트 초기화"""

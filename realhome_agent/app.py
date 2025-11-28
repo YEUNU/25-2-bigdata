@@ -170,7 +170,7 @@ def get_agent() -> RealHomeAgent:
     if st.session_state.agent is None:
         try:
             st.session_state.agent = RealHomeAgent(
-                model_name=os.getenv("OPENAI_MODEL", "gpt-4o-mini"),
+                model_name=os.getenv("OPENAI_MODEL", "gpt-5-mini-2025-08-07"),
                 temperature=0.3,
                 verbose=False
             )

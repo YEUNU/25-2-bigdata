@@ -8,6 +8,7 @@ Author: RealHome Agent Team
 Version: 1.0.0
 """
 
+import os
 import logging
 from typing import List, Dict, Any, Optional, Tuple
 from dataclasses import dataclass
@@ -48,15 +49,17 @@ class EmbeddingModel:
     다국어 지원 임베딩 생성을 담당합니다.
     """
     
-    def __init__(self, model_name: str = "BAAI/bge-m3"):
+    def __init__(self, model_name: str = None):
         """
         임베딩 모델 초기화
         
         Args:
-            model_name: HuggingFace 모델 이름
+            model_name: HuggingFace 모델 이름 (기본값: EMBEDDING_MODEL 환경변수)
         """
-        self.model_name = model_name
-        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        # 환경변수에서 설정 읽기
+        self.model_name = model_name or os.getenv("EMBEDDING_MODEL", "BAAI/bge-m3")
+        device_env = os.getenv("EMBEDDING_DEVICE", "cpu")
+        self.device = torch.device(device_env if device_env == "cuda" and torch.cuda.is_available() else "cpu")
         self.tokenizer = None
         self.model = None
         self._is_loaded = False

@@ -21,14 +21,14 @@ services:
       - "8501:8501"
     environment:
       - OPENAI_API_KEY=${OPENAI_API_KEY}
-      - OPENAI_MODEL=${OPENAI_MODEL:-gpt-4o-mini}
+      - OPENAI_MODEL=${OPENAI_MODEL:-gpt-5-mini-2025-08-07}
       - OPENAI_TEMPERATURE=${OPENAI_TEMPERATURE:-0.3}
       - ES_HOST=elasticsearch
       - ES_PORT=9200
       - ES_INDEX=${ES_INDEX:-realhome_apartments}
       - GOOGLE_API_KEY=${GOOGLE_API_KEY:-}
       - GOOGLE_SEARCH_ENGINE_ID=${GOOGLE_SEARCH_ENGINE_ID:-}
-      - EMBEDDING_MODEL=${EMBEDDING_MODEL:-google/embeddinggemma-300m}
+      - EMBEDDING_MODEL=${EMBEDDING_MODEL:-BAAI/bge-m3}
       - EMBEDDING_DEVICE=${EMBEDDING_DEVICE:-cpu}
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
     volumes:
@@ -115,7 +115,7 @@ services:
       - ES_HOST=elasticsearch
       - ES_PORT=9200
       - ES_INDEX=${ES_INDEX:-realhome_apartments}
-      - EMBEDDING_MODEL=${EMBEDDING_MODEL:-google/embeddinggemma-300m}
+      - EMBEDDING_MODEL=${EMBEDDING_MODEL:-BAAI/bge-m3}
       - EMBEDDING_DEVICE=${EMBEDDING_DEVICE:-cpu}
     volumes:
       - ../:/data  # 상위 디렉토리의 CSV 파일 마운트
