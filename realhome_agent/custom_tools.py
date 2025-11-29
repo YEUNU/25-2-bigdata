@@ -223,10 +223,10 @@ class PolicySearchInput(BaseModel):
 @tool(args_schema=PolicySearchInput)
 def policy_search_tool(query: str, num_results: int = 5) -> str:
     """
-    Google Search API를 활용하여 최신 부동산 정책 및 대출 규제 정보를 검색합니다.
+    ElasticSearch에 인덱싱된 부동산 정책 문서를 검색합니다.
     
-    부동산 구매와 관련된 정책, 규제, 대출 조건, 세금 정보 등을
-    실시간으로 검색하여 제공합니다.
+    PDF로 저장된 부동산 정책 문서에서 관련 정보를 검색하여 제공합니다.
+    LTV, DSR, 대출 규제, 세금, 청약 등 다양한 정책 정보 검색 가능.
     
     Args:
         query: 검색할 정책/규제 키워드
@@ -238,73 +238,69 @@ def policy_search_tool(query: str, num_results: int = 5) -> str:
     try:
         logger.info(f"정책 검색 시작: {query}")
         
-        # Google Custom Search API 설정
-        api_key = os.getenv("GOOGLE_API_KEY")
-        search_engine_id = os.getenv("GOOGLE_SEARCH_ENGINE_ID")
+        # ElasticSearch 연결
+        from policy_indexer import PolicyIndexer
         
-        if not api_key or not search_engine_id:
-            logger.warning("Google API 키가 설정되지 않음. 더미 데이터 반환")
+        indexer = PolicyIndexer(
+            host=os.getenv("ES_HOST", "localhost"),
+            port=int(os.getenv("ES_PORT", "9200")),
+            index_name="realhome_policies"
+        )
+        
+        if not indexer.connect():
+            logger.warning("ElasticSearch 연결 실패. 더미 데이터 반환")
             return _get_dummy_policy_results(query)
         
-        # 검색 쿼리 강화 (부동산/정책 관련 키워드 추가)
-        enhanced_query = f"{query} 부동산 정책 규제 2025년"
+        # 정책 검색
+        search_results = indexer.search(query, size=num_results)
         
-        # Google Custom Search API 호출
-        url = "https://www.googleapis.com/customsearch/v1"
-        params = {
-            "key": api_key,
-            "cx": search_engine_id,
-            "q": enhanced_query,
-            "num": min(num_results, 10),
-            "lr": "lang_ko",  # 한국어 결과 우선
-            "dateRestrict": "m6"  # 최근 6개월 결과
-        }
+        if not search_results:
+            # 인덱스가 비어있거나 결과 없음 - 더미 데이터 반환
+            logger.warning("정책 검색 결과 없음. 더미 데이터 반환")
+            return _get_dummy_policy_results(query)
         
-        response = requests.get(url, params=params, timeout=10)
-        response.raise_for_status()
-        
-        data = response.json()
-        
-        # 결과 파싱
+        # 결과 포맷팅
         results = []
-        for item in data.get('items', []):
-            result = PolicySearchResult(
-                title=item.get('title', ''),
-                snippet=item.get('snippet', ''),
-                link=item.get('link', ''),
-                source=item.get('displayLink', ''),
-                published_date=item.get('pagemap', {}).get('metatags', [{}])[0].get('article:published_time', '')
-            )
-            results.append(result.model_dump())
-        
-        if not results:
-            return json.dumps({
-                "status": "no_results",
-                "message": f"'{query}'에 대한 정책 정보를 찾지 못했습니다.",
-                "policies": []
-            }, ensure_ascii=False)
+        for hit in search_results:
+            doc = hit['document']
+            highlights = hit.get('highlights', {})
+            
+            # 하이라이트된 텍스트 추출
+            snippet = ""
+            if 'full_text' in highlights:
+                snippet = " ... ".join(highlights['full_text'][:2])
+            elif 'sections.content' in highlights:
+                snippet = " ... ".join(highlights['sections.content'][:2])
+            else:
+                # 하이라이트 없으면 문서 시작 부분
+                snippet = doc.get('full_text', '')[:200] + "..."
+            
+            result = {
+                "title": doc.get('title', ''),
+                "snippet": snippet,
+                "date": doc.get('date', ''),
+                "keywords": doc.get('keywords', []),
+                "score": hit['score'],
+                "source": f"정책문서 ({doc.get('filename', '')})"
+            }
+            results.append(result)
         
         response_data = {
             "status": "success",
             "query": query,
             "search_date": datetime.now().strftime("%Y-%m-%d %H:%M"),
             "total_found": len(results),
-            "policies": results
+            "policies": results,
+            "data_source": "ElasticSearch 정책 인덱스"
         }
         
         logger.info(f"정책 검색 완료: {len(results)}개 결과")
         return json.dumps(response_data, ensure_ascii=False, indent=2)
         
-    except requests.RequestException as e:
-        logger.error(f"정책 검색 API 오류: {e}")
-        return _get_dummy_policy_results(query)
     except Exception as e:
         logger.error(f"정책 검색 오류: {e}")
-        return json.dumps({
-            "status": "error",
-            "message": f"정책 검색 중 오류가 발생했습니다: {str(e)}",
-            "policies": []
-        }, ensure_ascii=False)
+        # 오류 시 더미 데이터 반환
+        return _get_dummy_policy_results(query)
 
 
 def _get_dummy_policy_results(query: str) -> str:
