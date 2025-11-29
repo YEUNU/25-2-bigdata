@@ -66,8 +66,11 @@ cp .env.example .env
 # 전체 시스템 시작 (GPU 가속)
 docker-compose up -d
 
-# 데이터 인덱싱 (최초 1회, GPU 가속)
+# 아파트 데이터 인덱싱 (최초 1회, GPU 가속)
 docker-compose --profile indexing up indexer
+
+# 정책 문서 PDF 인덱싱
+docker-compose exec realhome-agent python policy_indexer.py
 
 # 로그 확인
 docker-compose logs -f realhome-agent
@@ -98,6 +101,65 @@ sudo apt-get update
 sudo apt-get install -y nvidia-container-toolkit
 
 # Docker 재시작
+sudo systemctl restart docker
+
+# 테스트
+docker run --rm --gpus all nvidia/cuda:12.1.1-base-ubuntu22.04 nvidia-smi
+```
+
+## 정책 문서 인덱싱
+
+PDF 형식의 정책 문서를 OCR로 텍스트 추출 후 ElasticSearch에 인덱싱합니다.
+
+### 로컬 실행 (Python 환경)
+```bash
+# 의존성 설치
+pip install -r requirements.txt
+
+# Tesseract OCR 설치 (Ubuntu/WSL)
+sudo apt-get install tesseract-ocr tesseract-ocr-kor poppler-utils
+
+# Tesseract OCR 설치 (Windows)
+# https://github.com/UB-Mannheim/tesseract/wiki 에서 설치
+
+# PDF 파일을 상위 디렉토리에 배치 (예: R25_1015.pdf)
+# 실행
+python policy_indexer.py
+
+# OCR 사용 (이미지 기반 PDF)
+USE_OCR=true python policy_indexer.py
+```
+
+### Docker 환경에서 실행
+```bash
+# 컨테이너 내부에서 실행
+docker-compose exec realhome-agent python policy_indexer.py
+
+# 또는 docker run
+docker-compose run --rm realhome-agent python policy_indexer.py
+```
+
+### 정책 검색 테스트
+```python
+from policy_indexer import PolicyIndexer
+
+indexer = PolicyIndexer()
+indexer.connect()
+
+# 검색
+results = indexer.search("LTV 규제", size=5)
+for result in results:
+    print(f"제목: {result['document']['title']}")
+    print(f"점수: {result['score']}")
+    print(f"키워드: {result['document']['keywords']}")
+```
+
+## 주요 기능
+
+1. **아파트 검색**: ElasticSearch 하이브리드 검색 (BM25 + kNN 임베딩)
+2. **정책 검색**: PDF 문서 OCR + ElasticSearch 인덱싱
+3. **대출 계산**: LTV/DSR 기반 대출 가능 금액 계산
+4. **AI 에이전트**: LangGraph ReAct 패턴 기반 대화형 추천
 sudo systemctl restart docker
 
 # 테스트

@@ -29,6 +29,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     curl \
     git \
+    # OCR 관련 패키지
+    tesseract-ocr \
+    tesseract-ocr-kor \
+    tesseract-ocr-eng \
+    poppler-utils \
     && ln -sf /usr/bin/python3 /usr/bin/python \
     && rm -rf /var/lib/apt/lists/*
 
