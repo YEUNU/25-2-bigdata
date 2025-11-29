@@ -2,6 +2,7 @@
 # 리얼홈 에이전트 Dockerfile (NVIDIA CUDA 가속 지원)
 # =============================================================================
 # Python 3.10 + CUDA 12.8 지원 (임베딩 모델 GPU 가속)
+# 빌드 캐시 최적화 적용
 
 # NVIDIA CUDA 베이스 이미지 사용
 FROM nvidia/cuda:12.8.0-cudnn-devel-ubuntu22.04
@@ -11,10 +12,9 @@ LABEL maintainer="RealHome Agent Team"
 LABEL version="1.0.0"
 LABEL description="라이프스타일 기반 리얼홈 에이전트 - 서울시 아파트 맞춤 추천 서비스 (CUDA 가속)"
 
-# 환경 변수 설정
+# 환경 변수 설정 (PIP_NO_CACHE_DIR 제거하여 캐시 활용)
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
-    PIP_NO_CACHE_DIR=1 \
     PIP_DISABLE_PIP_VERSION_CHECK=1 \
     DEBIAN_FRONTEND=noninteractive \
     NVIDIA_VISIBLE_DEVICES=all \
@@ -35,16 +35,22 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # 작업 디렉토리 설정
 WORKDIR /app
 
-# Python 의존성 설치 (캐시 활용)
-COPY requirements.txt .
-RUN pip install --upgrade pip && \
-    pip install -r requirements.txt
-
-# PyTorch CUDA 버전 설치 (CPU 버전 덮어쓰기)
-RUN pip uninstall -y torch && \
+# ============================================================================
+# 의존성 설치 (캐시 최적화)
+# ============================================================================
+# 1단계: PyTorch CUDA 버전 먼저 설치 (가장 무거움 - 캐시 우선순위 높음)
+RUN --mount=type=cache,target=/root/.cache/pip \
+    pip install --upgrade pip && \
     pip install torch --index-url https://download.pytorch.org/whl/cu128
 
-# 애플리케이션 코드 복사
+# 2단계: 나머지 의존성 설치 (requirements.txt에서 torch 제외)
+COPY requirements.txt .
+RUN --mount=type=cache,target=/root/.cache/pip \
+    pip install -r requirements.txt
+
+# ============================================================================
+# 애플리케이션 코드 복사 (가장 자주 변경됨 - 마지막에 배치)
+# ============================================================================
 COPY . .
 
 # 데이터 디렉토리 생성

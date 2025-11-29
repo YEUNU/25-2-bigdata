@@ -27,8 +27,8 @@ elasticsearch>=8.0.0,<9.0.0
 # -----------------------------------------------------------------------------
 # Embedding Model (CUDA 가속 지원)
 # -----------------------------------------------------------------------------
-# PyTorch는 Dockerfile에서 CUDA 버전으로 별도 설치됨
-torch>=2.0.0
+# ⚠️ PyTorch는 Dockerfile에서 CUDA 버전으로 별도 설치됨 (torch 제외)
+# torch>=2.0.0  # Dockerfile에서 cu128 버전 설치
 transformers>=4.35.0
 accelerate>=0.25.0
 sentencepiece>=0.1.99
